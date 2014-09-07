@@ -1,0 +1,27 @@
+#!/bin/sh
+
+test -x @bindir@/recovery-ui || exit 0
+
+case "$1" in
+  start)
+    echo -n "Starting recovery-ui"
+    start-stop-daemon -q -p @runstatedir@/recovery-ui.pid -x @bindir@/recovery-ui -S -b -m -- recovery-ui
+    echo "."
+    ;;
+  stop)
+    echo -n "Stopping recovery-ui"
+    start-stop-daemon -q -p @runstatedir@/recovery-ui.pid -x @bindir@/recovery-ui -K
+    echo "."
+    ;;
+  restart|reload|force-reload)
+    $0 stop
+    sleep 1
+    $0 start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|reload|force-reload}"
+    exit 1
+    ;;
+esac
+
+exit 0

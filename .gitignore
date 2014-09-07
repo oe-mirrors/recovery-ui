@@ -1,0 +1,3 @@
+*.o
+recovery-ui
+recovery-ui.init
