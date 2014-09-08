@@ -45,6 +45,11 @@ static int read_ifaddr_by_family(const char *name, int family, char *host, unsig
 			fprintf(stderr, "getnameinfo: %s (family=%d)", gai_strerror(status), ifa->ifa_addr->sa_family);
 			continue;
 		}
+		if (ifa->ifa_addr->sa_family == AF_INET6) {
+			struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)ifa->ifa_addr;
+			if (in6->sin6_scope_id != 0)
+				continue;
+		}
 		ret = ifa->ifa_addr->sa_family;
 		break;
 	}
