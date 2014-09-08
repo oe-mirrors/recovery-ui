@@ -140,14 +140,15 @@ int main(void)
 			static int incr = -1;
 			int extra_pixels;
 
-			lcd_set_x(lcd, -count);
-
 			extra_pixels = (hostlen * font_width) - display_width;
 			// length might have changed, reset
 			if (count < 0 || count > extra_pixels) {
 				count = 0;
 				incr = -1;
 			}
+
+			lcd_set_x(lcd, -count);
+
 			// change scroll direction
 			if (count == 0 || count == extra_pixels)
 				incr = -incr;
