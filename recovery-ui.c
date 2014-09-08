@@ -15,7 +15,7 @@
 #include "lcd.h"
 #include "lcdlogo.h"
 
-static int read_ifaddr_by_family(const char *name, int family, char *host, unsigned int hostlen)
+static int read_ifaddr_by_family(int family, char *host, unsigned int hostlen)
 {
 	struct ifaddrs *ifaddr, *ifa;
 	int ret = AF_UNSPEC;
@@ -27,9 +27,9 @@ static int read_ifaddr_by_family(const char *name, int family, char *host, unsig
 	}
 
 	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
-		if (ifa->ifa_addr == NULL || ifa->ifa_name == NULL)
+		if (ifa->ifa_addr == NULL)
 			continue;
-		if (strcmp(ifa->ifa_name, name))
+		if (ifa->ifa_flags & IFF_LOOPBACK)
 			continue;
 		if (!(ifa->ifa_flags & IFF_RUNNING))
 			continue;
@@ -58,15 +58,15 @@ static int read_ifaddr_by_family(const char *name, int family, char *host, unsig
 	return ret;
 }
 
-static int read_ifaddr(const char *iface, char *host, unsigned int hostlen)
+static int read_ifaddr(char *host, unsigned int hostlen)
 {
 	int family;
 
-	family = read_ifaddr_by_family(iface, AF_INET, host, hostlen);
+	family = read_ifaddr_by_family(AF_INET, host, hostlen);
 	if (family == AF_UNSPEC)
-		family = read_ifaddr_by_family(iface, AF_INET6, host, hostlen);
+		family = read_ifaddr_by_family(AF_INET6, host, hostlen);
 	if (family == AF_UNSPEC)
-		family = read_ifaddr_by_family(iface, AF_UNSPEC, host, hostlen);
+		family = read_ifaddr_by_family(AF_UNSPEC, host, hostlen);
 
 	return family;
 }
@@ -108,7 +108,7 @@ int main(void)
 		// If we have an address, update every 30 seconds,
 		// otherwise retry every second.
 		if (family == AF_UNSPEC || (n % update_interval) == 0) {
-			family = read_ifaddr("eth0", host, sizeof(host));
+			family = read_ifaddr(host, sizeof(host));
 			if (family == AF_UNSPEC) {
 				lcd_set_x(lcd, (display_width - (strlen(wait_msg) + 2) * font_width) / 2);
 				lcd_clear(lcd, font_height);
