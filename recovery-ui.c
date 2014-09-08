@@ -5,6 +5,7 @@
 
 #define _GNU_SOURCE
 #include <ifaddrs.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <string.h>
@@ -29,6 +30,8 @@ static int read_ifaddr_by_family(const char *name, int family, char *host, unsig
 		if (ifa->ifa_addr == NULL || ifa->ifa_name == NULL)
 			continue;
 		if (strcmp(ifa->ifa_name, name))
+			continue;
+		if (!(ifa->ifa_flags & IFF_RUNNING))
 			continue;
 		if (ifa->ifa_addr->sa_family == AF_UNSPEC ||
 		    ifa->ifa_addr->sa_family == AF_PACKET)
