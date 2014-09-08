@@ -39,6 +39,8 @@ static int read_ifaddr_by_family(const char *name, int family, char *host, unsig
 		if (family != AF_UNSPEC && ifa->ifa_addr->sa_family != family)
 			continue;
 		status = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_storage), host, hostlen, NULL, 0, 0);
+		if (status == EAI_AGAIN)
+			status = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_storage), host, hostlen, NULL, 0, NI_NUMERICHOST);
 		if (status != 0) {
 			fprintf(stderr, "getnameinfo: %s (family=%d)", gai_strerror(status), ifa->ifa_addr->sa_family);
 			continue;
