@@ -5,7 +5,7 @@ test -x @bindir@/recovery-ui || exit 0
 case "$1" in
   start)
     echo -n "Starting recovery-ui"
-    start-stop-daemon -q -p @runstatedir@/recovery-ui.pid -x @bindir@/recovery-ui -S -b -m -- recovery-ui
+    start-stop-daemon -q -p @runstatedir@/recovery-ui.pid -x @bindir@/recovery-ui -S -b -m
     echo "."
     ;;
   stop)
