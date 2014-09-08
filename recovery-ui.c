@@ -74,6 +74,8 @@ static int read_ifaddr(const char *iface, char *host, unsigned int hostlen)
 int main(void)
 {
 	const char rescue_mode[] = "RESCUE MODE";
+	const char wait_msg[] = "Waiting for DHCP";
+	const char progress[] = "-\\|/";
 	char host[NI_MAXHOST];
 	size_t hostlen;
 	struct lcd *lcd;
@@ -108,6 +110,10 @@ int main(void)
 		if (family == AF_UNSPEC || (n % update_interval) == 0) {
 			family = read_ifaddr("eth0", host, sizeof(host));
 			if (family == AF_UNSPEC) {
+				lcd_set_x(lcd, (display_width - (strlen(wait_msg) + 2) * font_width) / 2);
+				lcd_clear(lcd, font_height);
+				lcd_printf(lcd, "%s %c", wait_msg, progress[n % 4]);
+				lcd_update(lcd);
 				update_interval = 30;
 				sleep(1);
 				continue;
