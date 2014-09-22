@@ -15,6 +15,11 @@
 #include "lcd.h"
 #include "lcdlogo.h"
 
+static bool hostname_is_blacklisted(const char *host)
+{
+	return !strcmp(host, "localhost");
+}
+
 static int read_ifaddr_by_family(int family, char *host, unsigned int hostlen)
 {
 	struct ifaddrs *ifaddr, *ifa;
@@ -39,7 +44,7 @@ static int read_ifaddr_by_family(int family, char *host, unsigned int hostlen)
 		if (family != AF_UNSPEC && ifa->ifa_addr->sa_family != family)
 			continue;
 		status = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_storage), host, hostlen, NULL, 0, 0);
-		if (status == EAI_AGAIN)
+		if (status == EAI_AGAIN || (status == 0 && hostname_is_blacklisted(host)))
 			status = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_storage), host, hostlen, NULL, 0, NI_NUMERICHOST);
 		if (status != 0) {
 			fprintf(stderr, "getnameinfo: %s (family=%d)", gai_strerror(status), ifa->ifa_addr->sa_family);
