@@ -130,19 +130,18 @@ unsigned int lcd_font_height(struct lcd *lcd)
 	return 8;
 }
 
-void lcd_putc(struct lcd *lcd, char c)
+static void lcd_putc_4bpp(struct lcd *lcd, char c)
 {
-	unsigned int row, column, data_index, font_index, mask;
+	unsigned int row, column, data_index, font_index;
 	unsigned int font_width = lcd_font_width(lcd);
 	unsigned int font_height = lcd_font_height(lcd);
-
-	assert(lcd->bpp == 4);
+	unsigned int mask;
 
 	mask = (lcd->x & 1) ? 0x0f : 0xf0;
 	font_index = (unsigned char)c * font_width;
 	for (column = 0; column < font_width; column++) {
 		if (lcd->x >= 0 && (size_t)lcd->x < lcd->width) {
-			data_index = lcd->y * lcd->stride + lcd->x / 2;
+			data_index = lcd->y * lcd->stride + lcd->x * lcd->bpp / 8;
 			for (row = 0; row < font_height; row++) {
 				if (lcdfont[font_index] & (1 << row))
 					lcd->data[data_index] |= mask;
@@ -155,6 +154,14 @@ void lcd_putc(struct lcd *lcd, char c)
 		font_index++;
 		lcd->x++;
 	}
+}
+
+void lcd_putc(struct lcd *lcd, char c)
+{
+	if (lcd->bpp == 4)
+		lcd_putc_4bpp(lcd, c);
+	else
+		abort();
 }
 
 void lcd_puts(struct lcd *lcd, const char *str)
