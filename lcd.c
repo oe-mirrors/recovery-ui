@@ -5,6 +5,7 @@
 
 #define _GNU_SOURCE
 #include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -26,6 +27,43 @@ struct lcd {
 	int y;
 	unsigned char *data;
 };
+
+static unsigned long ulong_from_file(const char *filename, unsigned long dflt)
+{
+	unsigned long value;
+	char *data = 0;
+	char *end = 0;
+	size_t n = 0;
+	ssize_t ret;
+	FILE *f;
+
+	f = fopen(filename, "r");
+	if (f == NULL)
+		return dflt;
+
+	ret = getline(&data, &n, f);
+	if (ret < 0) {
+		perror("getline");
+		abort();
+	}
+
+	fclose(f);
+
+	errno = 0;
+	value = strtoul(data, &end, 16);
+	if (errno != 0) {
+		perror("strtoul");
+		abort();
+	}
+
+	if (data == end) {
+		fprintf(stderr, "strtoul failed");
+		abort();
+	}
+
+	free(data);
+	return value;
+}
 
 off_t lcd_seek(struct lcd *lcd, off_t offset, int whence)
 {
@@ -146,9 +184,9 @@ int lcd_printf(struct lcd *lcd, const char *fmt, ...)
 struct lcd *lcd_open(void)
 {
 	const char device[] = "/dev/dbox/oled0";
-	const unsigned int width = 128;
-	const unsigned int height = 64;
-	const unsigned int bpp = 4;
+	const unsigned int width = ulong_from_file("/proc/stb/lcd/xres", 128);
+	const unsigned int height = ulong_from_file("/proc/stb/lcd/yres", 64);
+	const unsigned int bpp = ulong_from_file("/proc/stb/lcd/bpp", 4);
 	const unsigned int stride = width * bpp / 8;
 	const unsigned int size = stride * height;
 	struct lcd *lcd;
