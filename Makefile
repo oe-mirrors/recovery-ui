@@ -12,14 +12,14 @@ localstatedir ?= $(prefix)/var
 runstatedir ?= $(localstatedir)/run
 
 override CFLAGS := $(CFLAGS) -Wall -Wextra -std=c99
-override CPPFLAGS := $(CPPFLAGS) -DNDEBUG
+override CPPFLAGS := $(CPPFLAGS) -DNDEBUG -MD
 
 INITSCRIPT := recovery-ui.init
 TARGETS := recovery-ui
 
 default: $(INITSCRIPT) $(TARGETS)
 
-recovery-ui: recovery-ui.o lcd.o lcdfont.h lcdlogo.h
+recovery-ui: recovery-ui.o lcd.o
 
 recovery-ui.init: recovery-ui.init.in Makefile
 	sed -e 's,@bindir@,$(bindir),g' \
@@ -28,10 +28,12 @@ recovery-ui.init: recovery-ui.init.in Makefile
 	    < $< > $@
 
 clean:
-	$(RM) $(INITSCRIPT) $(TARGETS) *.o
+	$(RM) $(INITSCRIPT) $(TARGETS) *.[do]
 
 install: $(TARGETS)
 	install -d $(DESTDIR)$(sysconfdir)/init.d
 	install -m 755 $(INITSCRIPT) $(DESTDIR)$(sysconfdir)/init.d/recovery-ui
 	install -d $(DESTDIR)$(bindir)
 	install -m 755 $(TARGETS) $(DESTDIR)$(bindir)
+
+-include $(wildcard *.d)
