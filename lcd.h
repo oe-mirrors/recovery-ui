@@ -12,7 +12,7 @@ void lcd_putc(struct lcd *lcd, char c);
 void lcd_puts(struct lcd *lcd, const char *str);
 int lcd_printf(struct lcd *lcd, const char *fmt, ...);
 off_t lcd_seek(struct lcd *lcd, off_t offset, int whence);
-ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count);
+void lcd_write_logo(struct lcd *lcd);
 
 void lcd_clear(struct lcd *lcd, unsigned int height);
 void lcd_set_x(struct lcd *lcd, int x);

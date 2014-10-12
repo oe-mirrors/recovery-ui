@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include "lcd.h"
 #include "lcdfont.h"
+#include "lcdlogo_128x8_gray4.h"
 
 struct lcd {
 	int fd;
@@ -208,7 +209,7 @@ void lcd_clear(struct lcd *lcd, unsigned int height)
 		memset(&lcd->data[lcd->stride * y], 0, lcd->stride * height);
 }
 
-ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count)
+static ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count)
 {
 	off_t offset;
 
@@ -222,4 +223,12 @@ ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count)
 	}
 
 	return -1;
+}
+
+void lcd_write_logo(struct lcd *lcd)
+{
+	if (lcd->width == 128 && lcd->bpp == 4)
+		lcd_write(lcd, lcdlogo_128x8_gray4, sizeof(lcdlogo_128x8_gray4));
+	else
+		abort();
 }

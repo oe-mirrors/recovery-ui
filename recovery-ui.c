@@ -13,7 +13,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include "lcd.h"
-#include "lcdlogo.h"
 
 static bool hostname_is_blacklisted(const char *host)
 {
@@ -102,7 +101,9 @@ int main(void)
 	font_height = lcd_font_height(lcd);
 	max_chars = display_width / font_width;
 
-	lcd_write(lcd, lcdlogo_4bit, sizeof(lcdlogo_4bit));
+	lcd_clear(lcd, display_height);
+	lcd_set_y(lcd, 16);
+	lcd_write_logo(lcd);
 	lcd_set_x(lcd, (display_width - strlen(rescue_mode) * font_width) / 2);
 	lcd_set_y(lcd, display_height - font_height * 4);
 	lcd_puts(lcd, rescue_mode);
