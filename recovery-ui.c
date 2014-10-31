@@ -19,9 +19,90 @@ static bool hostname_is_blacklisted(const char *host)
 	return !strcmp(host, "localhost");
 }
 
+static bool hostname_is_valid(const char *host)
+{
+	size_t len = strlen(host);
+
+	if (len < 1 || len > 255)
+		return false;
+
+	while (*host) {
+		char c = *host++;
+		if (!(c >= '0' && c <= '9') &&
+		    !(c >= 'a' && c <= 'z') &&
+		    !(c >= 'A' && c <= 'Z') &&
+		    !(c == '-') &&
+		    !(c == '.'))
+			return false;
+	}
+
+	return true;
+}
+
+static bool hostname_is_numeric(const char *host, int family)
+{
+	struct addrinfo *res = NULL;
+	struct addrinfo hints;
+	int status;
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = family;
+	hints.ai_socktype = SOCK_DGRAM;
+	hints.ai_flags = AI_NUMERICHOST;
+
+	status = getaddrinfo(host, "0", &hints, &res);
+	freeaddrinfo(res);
+	return status == 0;
+}
+
+static bool hostname_matches_numerichost(const char *host, const char *numerichost, int family)
+{
+	struct addrinfo *res = NULL;
+	struct addrinfo hints;
+	bool match = false;
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = family;
+	hints.ai_socktype = SOCK_DGRAM;
+	hints.ai_flags = 0;
+
+	if (getaddrinfo(host, "0", &hints, &res) == 0) {
+		struct addrinfo *ai;
+		for (ai = res; ai != NULL; ai = ai->ai_next) {
+			char buf[NI_MAXHOST];
+			if (getnameinfo(ai->ai_addr, ai->ai_addrlen, buf, sizeof(buf), NULL, 0, NI_NUMERICHOST) == 0) {
+				match = !strcmp(buf, numerichost);
+				if (match)
+					break;
+			}
+		}
+
+		freeaddrinfo(res);
+	}
+
+	return match;
+}
+
+static bool hostname_is_plausible(const char *host, const char *numerichost, int family)
+{
+	if (hostname_is_blacklisted(host))
+		fprintf(stderr, "Hostname is blacklisted: '%s'\n", host);
+	else if (!hostname_is_valid(host))
+		fprintf(stderr, "Hostname is invalid: '%s'\n", host);
+	else if (hostname_is_numeric(host, family))
+		fprintf(stderr, "Hostname looks like a numeric address: '%s'\n", host);
+	else if (!hostname_matches_numerichost(host, numerichost, family))
+		fprintf(stderr, "Hostname doesn't resolve to my address: '%s'\n", host);
+	else
+		return true;
+
+	return false;
+}
+
 static int read_ifaddr_by_family(int family, char *host, unsigned int hostlen)
 {
 	struct ifaddrs *ifaddr, *ifa;
+	char numerichost[NI_MAXHOST];
 	int ret = AF_UNSPEC;
 	int status;
 
@@ -42,13 +123,19 @@ static int read_ifaddr_by_family(int family, char *host, unsigned int hostlen)
 			continue;
 		if (family != AF_UNSPEC && ifa->ifa_addr->sa_family != family)
 			continue;
-		status = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_storage), host, hostlen, NULL, 0, 0);
-		if (status == EAI_AGAIN || (status == 0 && hostname_is_blacklisted(host)))
-			status = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_storage), host, hostlen, NULL, 0, NI_NUMERICHOST);
+
+		status = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_storage), numerichost, sizeof(numerichost), NULL, 0, NI_NUMERICHOST);
 		if (status != 0) {
 			fprintf(stderr, "getnameinfo: %s (family=%d)\n", gai_strerror(status), ifa->ifa_addr->sa_family);
 			continue;
 		}
+
+		status = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_storage), host, hostlen, NULL, 0, NI_NAMEREQD);
+		if (status != 0 || !hostname_is_plausible(host, numerichost, ifa->ifa_addr->sa_family)) {
+			strncpy(host, numerichost, hostlen);
+			host[hostlen - 1] = '\0';
+		}
+
 		if (ifa->ifa_addr->sa_family == AF_INET6) {
 			struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)ifa->ifa_addr;
 			if (in6->sin6_scope_id != 0)
