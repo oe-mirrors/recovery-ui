@@ -46,7 +46,7 @@ static int read_ifaddr_by_family(int family, char *host, unsigned int hostlen)
 		if (status == EAI_AGAIN || (status == 0 && hostname_is_blacklisted(host)))
 			status = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_storage), host, hostlen, NULL, 0, NI_NUMERICHOST);
 		if (status != 0) {
-			fprintf(stderr, "getnameinfo: %s (family=%d)", gai_strerror(status), ifa->ifa_addr->sa_family);
+			fprintf(stderr, "getnameinfo: %s (family=%d)\n", gai_strerror(status), ifa->ifa_addr->sa_family);
 			continue;
 		}
 		if (ifa->ifa_addr->sa_family == AF_INET6) {
