@@ -1,6 +1,6 @@
 #!/usr/bin/make -f
 #
-# Copyright (C) 2014 Dream Property GmbH, Germany
+# Copyright (C) 2016 Dream Property GmbH, Germany
 #                    http://www.dream-multimedia-tv.de/
 #
 

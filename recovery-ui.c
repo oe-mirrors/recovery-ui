@@ -9,8 +9,9 @@
 #include <netdb.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/ioctl.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
 #include "lcd.h"
 
@@ -162,104 +163,274 @@ static int read_ifaddr(char *host, unsigned int hostlen)
 	return family;
 }
 
-int main(void)
+static bool timer_set(int fd, unsigned int ms)
 {
-	const char rescue_mode[] = "RESCUE MODE";
-	const char wait_msg[] = "Waiting for DHCP";
-	const char progress[] = "-\\|/";
-	char host[NI_MAXHOST];
-	size_t hostlen;
-	struct lcd *lcd;
-	size_t display_width, display_height;
-	size_t font_width, font_height;
-	size_t max_chars;
-	int family = AF_UNSPEC;
-	unsigned int n;
-	bool force_redraw = true;
-	unsigned int update_interval = 30;
+	struct itimerspec it = {
+		.it_value = {
+			.tv_sec = ms / 1000,
+			.tv_nsec = (ms % 1000) * 1000000,
+		},
+	};
 
-	lcd = lcd_open();
-	if (lcd == NULL)
-		return 1;
-
-	display_width = lcd_width(lcd);
-	display_height = lcd_height(lcd);
-	font_width = lcd_font_width(lcd);
-	font_height = lcd_font_height(lcd);
-	max_chars = display_width / font_width;
-
-	lcd_clear(lcd, display_height);
-	lcd_set_y(lcd, 16);
-	lcd_write_logo(lcd);
-	lcd_set_x(lcd, (display_width - strlen(rescue_mode) * font_width) / 2);
-	lcd_set_y(lcd, display_height - font_height * 4);
-	lcd_puts(lcd, rescue_mode);
-	lcd_update(lcd);
-
-	lcd_set_y(lcd, display_height - font_height * 2);
-	for (n = 0; ; n++) {
-		// If we have an address, update every 30 seconds,
-		// otherwise retry every second.
-		if (family == AF_UNSPEC || (n % update_interval) == 0) {
-			family = read_ifaddr(host, sizeof(host));
-			if (family == AF_UNSPEC) {
-				lcd_set_x(lcd, (display_width - (strlen(wait_msg) + 2) * font_width) / 2);
-				lcd_clear(lcd, font_height);
-				lcd_printf(lcd, "%s %c", wait_msg, progress[n % 4]);
-				lcd_update(lcd);
-				update_interval = 30;
-				sleep(1);
-				continue;
-			}
-
-			hostlen = strlen(host) + 8;
-			if (family == AF_INET6)
-				hostlen += 2;
-
-			force_redraw = true;
-		}
-
-		if (hostlen <= max_chars) {
-			if (!force_redraw) {
-				update_interval = 30;
-				sleep(1);
-				continue;
-			}
-			force_redraw = false;
-			lcd_set_x(lcd, (display_width - hostlen * font_width) / 2);
-			lcd_clear(lcd, font_height);
-		} else {
-			static int count = 0;
-			static int incr = -1;
-			int extra_pixels;
-
-			extra_pixels = (hostlen * font_width) - display_width;
-			// length might have changed, reset
-			if (count < 0 || count > extra_pixels) {
-				count = 0;
-				incr = -1;
-			}
-
-			lcd_set_x(lcd, -count);
-
-			// change scroll direction
-			if (count == 0 || count == extra_pixels)
-				incr = -incr;
-
-			count += incr;
-		}
-
-		if (family == AF_INET6)
-			lcd_printf(lcd, "http://[%s]/", host);
-		else
-			lcd_printf(lcd, "http://%s/", host);
-
-		lcd_update(lcd);
-
-		update_interval = 300;
-		usleep(100 * 1000);
+	if (timerfd_settime(fd, 0, &it, NULL) < 0) {
+		perror("timerfd_settime");
+		return false;
 	}
 
-	lcd_release(lcd);
+	return true;
+}
+
+static int timer_add(unsigned int ms)
+{
+	int fd;
+
+	fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+	if (fd < 0) {
+		perror("timerfd_create");
+		return -1;
+	}
+
+	if (!timer_set(fd, ms)) {
+		close(fd);
+		return -1;
+	}
+
+	return fd;
+}
+
+static bool epoll_add(int epollfd, int fd, void *ptr)
+{
+	struct epoll_event ev;
+
+	ev.events = EPOLLIN;
+	if (ptr == NULL)
+		ev.data.fd = fd;
+	else
+		ev.data.ptr = ptr;
+
+	if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &ev) == -1) {
+		perror("EPOLL_CTL_ADD");
+		return false;
+	}
+
+	return true;
+}
+
+struct display_state {
+	struct lcd *display;
+	size_t margin_top;
+	size_t margin_bottom;
+	size_t margin_left;
+	size_t margin_right;
+	size_t display_width;
+	size_t display_height;
+	size_t font_width;
+	size_t font_height;
+	size_t max_chars;
+	int count;
+	int incr;
+	int timerfd;
+};
+
+static bool state_init(struct display_state *st, enum display_type type)
+{
+	static const char rescue_mode[] = "RESCUE MODE";
+	unsigned int logo_width, logo_height;
+	struct lcd *display;
+	int fd;
+
+	memset(st, 0, sizeof(struct display_state));
+
+	display = display_open(type);
+	if (display == NULL)
+		return false;
+
+	fd = timer_add(0);
+	if (fd < 0) {
+		lcd_release(display);
+		return false;
+	}
+
+	st->timerfd = fd;
+	st->count = 0;
+	st->incr = -1;
+
+	st->display = display;
+	st->display_width = lcd_width(display);
+	st->display_height = lcd_height(display);
+	st->font_width = lcd_font_width(display);
+	st->font_height = lcd_font_height(display);
+	st->max_chars = st->display_width / st->font_width;
+
+	if (type == DISPLAY_TYPE_OLED) {
+		st->margin_top = 16;
+		st->margin_bottom = 0;
+		st->margin_left = 0;
+		st->margin_right = 0;
+	} else if (type == DISPLAY_TYPE_HDMI) {
+		st->margin_top = st->display_height * 7 / 100;
+		st->margin_bottom = st->margin_top;
+		st->margin_left = st->display_width * 7 / 100;
+		st->margin_right = st->margin_left;
+	}
+
+	lcd_clear(display, st->display_height);
+
+	lcd_get_logo_size(display, &logo_width, &logo_height);
+	lcd_set_x(display, (st->display_width - logo_width) / 2);
+	lcd_set_y(display, st->margin_top);
+
+	lcd_write_logo(display);
+
+	lcd_set_x(display, (st->display_width - strlen(rescue_mode) * st->font_width) / 2);
+	lcd_set_y(display, st->display_height - st->font_height * 4 - st->margin_bottom);
+
+	lcd_puts(display, rescue_mode);
+
+	lcd_update(display);
+
+	lcd_set_y(display, st->display_height - st->font_height * 2 - st->margin_bottom);
+
+	return true;
+}
+
+static void state_print_wait_msg(struct display_state *st, unsigned int n)
+{
+	static const char wait_msg[] = "Waiting for DHCP";
+	static const char progress[] = "-\\|/";
+	struct lcd *display = st->display;
+
+	if (display == NULL)
+		return;
+
+	timer_set(st->timerfd, 0);
+
+	lcd_clear(display, st->font_height);
+
+	lcd_set_x(display, (st->display_width - (strlen(wait_msg) + 2) * st->font_width) / 2);
+	lcd_printf(display, "%s %c", wait_msg, progress[n % 4]);
+
+	lcd_update(display);
+}
+
+static void state_print_url(struct display_state *st, int family, const char *host)
+{
+	struct lcd *display = st->display;
+	size_t hostlen;
+	int extra_pixels;
+
+	if (display == NULL)
+		return;
+
+	hostlen = strlen(host) + 8;
+	if (family == AF_INET6)
+		hostlen += 2;
+
+	if (hostlen <= st->max_chars) {
+		timer_set(st->timerfd, 0);
+
+		lcd_set_x(display, (st->display_width - hostlen * st->font_width) / 2);
+	} else {
+		timer_set(st->timerfd, 100);
+
+		extra_pixels = (hostlen * st->font_width) - st->display_width;
+		// length might have changed, reset
+		if (st->count < 0 || st->count > extra_pixels) {
+			st->count = 0;
+			st->incr = -1;
+		}
+
+		lcd_set_x(display, -st->count);
+
+		// change scroll direction
+		if (st->count == 0 || st->count == extra_pixels)
+			st->incr = -st->incr;
+
+		st->count += st->incr;
+	}
+
+	lcd_clear(display, st->font_height);
+
+	if (family == AF_INET6)
+		lcd_printf(display, "http://[%s]/", host);
+	else
+		lcd_printf(display, "http://%s/", host);
+
+	lcd_update(display);
+}
+
+static void state_exit(struct display_state *st)
+{
+	struct lcd *display = st->display;
+
+	if (display == NULL)
+		return;
+
+	lcd_release(display);
+}
+
+#define MAX_EVENTS (DISPLAY_TYPE_MAX + 1)
+
+int main(void)
+{
+	char host[NI_MAXHOST];
+	struct display_state state[DISPLAY_TYPE_MAX];
+	int family = AF_UNSPEC;
+	unsigned int n = 0;
+	enum display_type type;
+	int epollfd;
+	int timerfd;
+
+	epollfd = epoll_create1(EPOLL_CLOEXEC);
+	if (epollfd < 0) {
+		perror("epoll_create1");
+		return 1;
+	}
+
+	timerfd = timer_add(1000);
+	if (timerfd < 0)
+		return 1;
+
+	epoll_add(epollfd, timerfd, NULL);
+
+	for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
+		if (state_init(&state[type], type))
+			epoll_add(epollfd, state[type].timerfd, &state[type]);
+
+	for (;;) {
+		struct epoll_event events[MAX_EVENTS];
+		int i, nfds;
+
+		nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
+		if (nfds == -1) {
+			perror("epoll_wait");
+			return 1;
+		}
+
+		for (i = 0; i < nfds; i++) {
+			if (events[i].data.fd == timerfd) {
+				// If we have an address, update every 30 seconds,
+				// otherwise retry every second.
+				family = read_ifaddr(host, sizeof(host));
+				if (family == AF_UNSPEC) {
+					timer_set(timerfd, 1000);
+					for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
+						state_print_wait_msg(&state[type], n);
+					n++;
+				} else {
+					timer_set(timerfd, 30000);
+					for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
+						state_print_url(&state[type], family, host);
+				}
+			} else {
+				struct display_state *st = events[i].data.ptr;
+				state_print_url(st, family, host);
+			}
+		}
+	}
+
+	for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
+		state_exit(&state[type]);
+
 	return 0;
 }

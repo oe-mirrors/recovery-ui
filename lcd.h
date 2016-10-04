@@ -3,9 +3,16 @@
 
 #include <stdbool.h>
 
+enum display_type {
+	DISPLAY_TYPE_MIN,
+	DISPLAY_TYPE_OLED = DISPLAY_TYPE_MIN,
+	DISPLAY_TYPE_HDMI,
+	DISPLAY_TYPE_MAX,
+};
+
 struct lcd;
 
-struct lcd *lcd_open(void);
+struct lcd *display_open(enum display_type);
 void lcd_release(struct lcd *lcd);
 
 void lcd_putc(struct lcd *lcd, char c);
@@ -24,5 +31,7 @@ unsigned int lcd_height(struct lcd *lcd);
 
 unsigned int lcd_font_height(struct lcd *lcd);
 unsigned int lcd_font_width(struct lcd *lcd);
+
+void lcd_get_logo_size(struct lcd *lcd, unsigned int *width, unsigned int *height);
 
 #endif /* __RECOVERY_LCD_H__ */

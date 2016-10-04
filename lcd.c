@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Dream Property GmbH, Germany
+ * Copyright (C) 2016 Dream Property GmbH, Germany
  *                    http://www.dream-multimedia-tv.de/
  */
 
@@ -17,8 +17,13 @@
 #include "lcdlogo_128x8_gray4.h"
 #include "lcdlogo_96x7_mono.h"
 
+#define ARRAY_SIZE(x)	(sizeof((x)) / sizeof(*(x)))
+
 struct lcd {
-	int fd;
+	enum display_type type;
+	union {
+		int fd;
+	};
 	unsigned int width;
 	unsigned int height;
 	unsigned int bpp;
@@ -94,16 +99,18 @@ bool lcd_update(struct lcd *lcd)
 {
 	ssize_t ret;
 
-	ret = write(lcd->fd, lcd->data, lcd->size);
-	assert(ret == (ssize_t)lcd->size);
-	if (ret < 0) {
-		fprintf(stderr, "lcd: write error: %m\n");
-		return false;
-	}
+	if (lcd->type == DISPLAY_TYPE_OLED) {
+		ret = write(lcd->fd, lcd->data, lcd->size);
+		assert(ret == (ssize_t)lcd->size);
+		if (ret < 0) {
+			fprintf(stderr, "lcd: write error: %m\n");
+			return false;
+		}
 
-	if ((size_t)ret != lcd->size) {
-		fprintf(stderr, "lcd: short write\n");
-		return false;
+		if ((size_t)ret != lcd->size) {
+			fprintf(stderr, "lcd: short write\n");
+			return false;
+		}
 	}
 
 	return true;
@@ -214,6 +221,13 @@ int lcd_printf(struct lcd *lcd, const char *fmt, ...)
 	return ret;
 }
 
+struct lcd *hdmi_open(void)
+{
+	struct lcd *lcd = NULL;
+
+	return lcd;
+}
+
 struct lcd *lcd_open(void)
 {
 	const char device[] = "/dev/dbox/oled0";
@@ -249,9 +263,20 @@ struct lcd *lcd_open(void)
 	return lcd;
 }
 
+struct lcd *display_open(enum display_type type)
+{
+	if (type == DISPLAY_TYPE_OLED)
+		return lcd_open();
+	if (type == DISPLAY_TYPE_HDMI)
+		return hdmi_open();
+
+	return NULL;
+}
+
 void lcd_release(struct lcd *lcd)
 {
-	close(lcd->fd);
+	if (lcd->type == DISPLAY_TYPE_OLED)
+		close(lcd->fd);
 	free(lcd);
 }
 
@@ -300,7 +325,7 @@ void lcd_write_logo(struct lcd *lcd)
 {
 	if (lcd->width == 128 && lcd->bpp == 4)
 		lcd_write(lcd, lcdlogo_128x8_gray4, sizeof(lcdlogo_128x8_gray4));
-	else if (lcd->width == 96 && lcd->bpp == 16) {
+	else if (lcd->bpp == 16) {
 		unsigned char logo[sizeof(lcdlogo_96x7_mono) * 16];
 		unsigned short *wptr = (unsigned short *)logo;
 		unsigned int i, j;
@@ -312,7 +337,22 @@ void lcd_write_logo(struct lcd *lcd)
 					*wptr++ = 0;
 			}
 		}
-		lcd_write(lcd, logo, sizeof(logo));
+		for (i = 0; i < 7; i++) {
+			lcd_write(lcd, &logo[i * 96 * 2], 96 * 2);
+			lcd_seek(lcd, lcd->stride, SEEK_CUR);
+		}
+	} else
+		abort();
+}
+
+void lcd_get_logo_size(struct lcd *lcd, unsigned int *width, unsigned int *height)
+{
+	if (lcd->bpp == 4) {
+		*width = 128;
+		*height = 8;
+	} else if (lcd->bpp == 16) {
+		*width = 96;
+		*height = 7;
 	} else
 		abort();
 }
