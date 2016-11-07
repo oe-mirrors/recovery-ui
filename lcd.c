@@ -33,6 +33,7 @@ struct lcd {
 	int y;
 	unsigned char *data;
 	unsigned char *background;
+	unsigned int fgcolor;
 };
 
 static unsigned long ulong_from_file(const char *filename, unsigned long dflt)
@@ -170,12 +171,19 @@ static void lcd_putc_4bpp(struct lcd *lcd, char c)
 	}
 }
 
+static inline unsigned int xrgb8888_to_rgb565(unsigned int pixel)
+{
+	return (((pixel & 0x00f80000) >> 8) |
+		((pixel & 0x0000fc00) >> 5) |
+		((pixel & 0x000000f8) >> 3));
+}
+
 static void lcd_putc_16bpp(struct lcd *lcd, char c)
 {
 	unsigned int row, column, data_index, font_index;
 	unsigned int font_width = lcd_font_width(lcd);
 	unsigned int font_height = lcd_font_height(lcd);
-	unsigned int value = 0xffff;
+	unsigned int value = xrgb8888_to_rgb565(lcd->fgcolor);
 	unsigned int scale_factor = lcd_scale_factor(lcd);
 	const unsigned char *pixel;
 	const unsigned char foreground[2] = {
@@ -275,6 +283,7 @@ struct lcd *lcd_open(void)
 	lcd->data = (unsigned char *)&lcd[1];
 	lcd->background = &lcd->data[size];
 	memset(lcd->background, 0, size);
+	lcd->fgcolor = 0xffffffff;
 
 	return lcd;
 }
@@ -337,6 +346,11 @@ static ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count)
 	return -1;
 }
 
+void lcd_set_fgcolor(struct lcd *lcd, unsigned int argb)
+{
+	lcd->fgcolor = argb;
+}
+
 void lcd_save_background(struct lcd *lcd)
 {
 	memcpy(lcd->background, lcd->data, lcd->size);
@@ -350,11 +364,12 @@ void lcd_write_logo(struct lcd *lcd)
 		unsigned int scale_factor = lcd_scale_factor(lcd);
 		unsigned char logo[sizeof(lcdlogo_96x7_mono) * 16 * scale_factor];
 		unsigned short *wptr = (unsigned short *)logo;
+		unsigned int fgcolor = xrgb8888_to_rgb565(lcd->fgcolor);
 		unsigned int i, j, k, pixel;
 		for (i = 0; i < sizeof(lcdlogo_96x7_mono); i++) {
 			for (j = 0; j < 8; j++) {
 				if (lcdlogo_96x7_mono[i] & (1 << (7 - j)))
-					pixel = 0xffff;
+					pixel = fgcolor;
 				else
 					pixel = 0;
 				for (k = 0; k < scale_factor; k++)

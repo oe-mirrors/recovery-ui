@@ -287,6 +287,7 @@ static bool state_init(struct display_state *st, enum display_type type)
 
 	lcd_write_logo(display);
 	lcd_save_background(display);
+	lcd_set_fgcolor(display, 0xffffd200);
 
 	lcd_set_x(display, (st->display_width - strlen(rescue_mode) * st->font_width) / 2);
 	lcd_set_y(display, st->display_height - st->font_height * 4 - st->margin_bottom);

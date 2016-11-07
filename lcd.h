@@ -21,6 +21,7 @@ int lcd_printf(struct lcd *lcd, const char *fmt, ...);
 off_t lcd_seek(struct lcd *lcd, off_t offset, int whence);
 void lcd_write_logo(struct lcd *lcd);
 void lcd_save_background(struct lcd *lcd);
+void lcd_set_fgcolor(struct lcd *lcd, unsigned int argb);
 
 void lcd_clear(struct lcd *lcd, unsigned int height);
 void lcd_set_x(struct lcd *lcd, int x);
