@@ -32,6 +32,7 @@ struct lcd {
 	int x;
 	int y;
 	unsigned char *data;
+	unsigned char *background;
 };
 
 static unsigned long ulong_from_file(const char *filename, unsigned long dflt)
@@ -174,17 +175,24 @@ static void lcd_putc_16bpp(struct lcd *lcd, char c)
 	unsigned int row, column, data_index, font_index;
 	unsigned int font_width = lcd_font_width(lcd);
 	unsigned int font_height = lcd_font_height(lcd);
-	unsigned int value;
+	unsigned int value = 0xffff;
 	unsigned int scale_factor = lcd_scale_factor(lcd);
+	const unsigned char *pixel;
+	const unsigned char foreground[2] = {
+		(value >> 0) & 0xff,
+		(value >> 8) & 0xff,
+	};
 
 	font_index = (unsigned char)c * font_width;
 	for (column = 0; column < font_width; column++) {
 		if (lcd->x >= 0 && (size_t)lcd->x < lcd->width) {
 			data_index = lcd->y * lcd->stride + lcd->x * lcd->bpp / 8;
 			for (row = 0; row < font_height; row++) {
-				value = (lcdfont[font_index / scale_factor] & (1 << (row / scale_factor))) ? 0xffff : 0x0000;
-				lcd->data[data_index + 0] = (value >> 8) & 0xff;
-				lcd->data[data_index + 1] = (value >> 0) & 0xff;
+				if (lcdfont[font_index / scale_factor] & (1 << (row / scale_factor)))
+					pixel = foreground;
+				else
+					pixel = &lcd->background[data_index];
+				memcpy(&lcd->data[data_index], pixel, 2);
 				data_index += lcd->stride;
 			}
 		}
@@ -251,7 +259,7 @@ struct lcd *lcd_open(void)
 		return NULL;
 	}
 
-	lcd = malloc(sizeof(struct lcd) + size);
+	lcd = malloc(sizeof(struct lcd) + size * 2);
 	if (lcd == NULL) {
 		close(fd);
 		return NULL;
@@ -265,6 +273,8 @@ struct lcd *lcd_open(void)
 	lcd->stride = stride;
 	lcd->size = size;
 	lcd->data = (unsigned char *)&lcd[1];
+	lcd->background = &lcd->data[size];
+	memset(lcd->background, 0, size);
 
 	return lcd;
 }
@@ -308,7 +318,7 @@ void lcd_clear(struct lcd *lcd, unsigned int height)
 		height = lcd->height - y;
 
 	if ((int)height > 0)
-		memset(&lcd->data[lcd->stride * y], 0, lcd->stride * height);
+		memcpy(&lcd->data[lcd->stride * y], &lcd->background[lcd->stride * y], lcd->stride * height);
 }
 
 static ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count)
@@ -325,6 +335,11 @@ static ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count)
 	}
 
 	return -1;
+}
+
+void lcd_save_background(struct lcd *lcd)
+{
+	memcpy(lcd->background, lcd->data, lcd->size);
 }
 
 void lcd_write_logo(struct lcd *lcd)
