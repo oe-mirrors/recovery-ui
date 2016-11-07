@@ -15,6 +15,7 @@
 #include "lcd.h"
 #include "lcdfont.h"
 #include "lcdlogo_128x8_gray4.h"
+#include "lcdlogo_400x240_rgb565.h"
 #include "lcdlogo_96x7_mono.h"
 
 #define ARRAY_SIZE(x)	(sizeof((x)) / sizeof(*(x)))
@@ -360,6 +361,8 @@ void lcd_write_logo(struct lcd *lcd)
 {
 	if (lcd->width == 128 && lcd->bpp == 4)
 		lcd_write(lcd, lcdlogo_128x8_gray4, sizeof(lcdlogo_128x8_gray4));
+	else if (lcd->width == 400 && lcd->height == 240 && lcd->bpp == 16)
+		lcd_write(lcd, lcdlogo_400x240_rgb565, sizeof(lcdlogo_400x240_rgb565));
 	else if (lcd->bpp == 16) {
 		unsigned int scale_factor = lcd_scale_factor(lcd);
 		unsigned char logo[sizeof(lcdlogo_96x7_mono) * 16 * scale_factor];
@@ -391,6 +394,9 @@ void lcd_get_logo_size(struct lcd *lcd, unsigned int *width, unsigned int *heigh
 	if (lcd->bpp == 4) {
 		*width = 128;
 		*height = 8;
+	} else if (lcd->width == 400 && lcd->height == 240 && lcd->bpp == 16) {
+		*width = 400;
+		*height = 240;
 	} else if (lcd->bpp == 16) {
 		unsigned int scale_factor = lcd_scale_factor(lcd);
 		*width = 96 * scale_factor;
