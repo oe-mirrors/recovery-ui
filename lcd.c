@@ -126,16 +126,21 @@ unsigned int lcd_height(struct lcd *lcd)
 	return lcd->height;
 }
 
+static inline unsigned int lcd_scale_factor(struct lcd *lcd)
+{
+	return (lcd->bpp == 16 && lcd->width >= 400) ? 2 : 1;
+}
+
 unsigned int lcd_font_width(struct lcd *lcd)
 {
 	(void)lcd;
-	return 6;
+	return 6 * lcd_scale_factor(lcd);
 }
 
 unsigned int lcd_font_height(struct lcd *lcd)
 {
 	(void)lcd;
-	return 8;
+	return 8 * lcd_scale_factor(lcd);
 }
 
 static void lcd_putc_4bpp(struct lcd *lcd, char c)
@@ -170,13 +175,14 @@ static void lcd_putc_16bpp(struct lcd *lcd, char c)
 	unsigned int font_width = lcd_font_width(lcd);
 	unsigned int font_height = lcd_font_height(lcd);
 	unsigned int value;
+	unsigned int scale_factor = lcd_scale_factor(lcd);
 
 	font_index = (unsigned char)c * font_width;
 	for (column = 0; column < font_width; column++) {
 		if (lcd->x >= 0 && (size_t)lcd->x < lcd->width) {
 			data_index = lcd->y * lcd->stride + lcd->x * lcd->bpp / 8;
 			for (row = 0; row < font_height; row++) {
-				value = (lcdfont[font_index] & (1 << row)) ? 0xffff : 0x0000;
+				value = (lcdfont[font_index / scale_factor] & (1 << (row / scale_factor))) ? 0xffff : 0x0000;
 				lcd->data[data_index + 0] = (value >> 8) & 0xff;
 				lcd->data[data_index + 1] = (value >> 0) & 0xff;
 				data_index += lcd->stride;
@@ -326,20 +332,25 @@ void lcd_write_logo(struct lcd *lcd)
 	if (lcd->width == 128 && lcd->bpp == 4)
 		lcd_write(lcd, lcdlogo_128x8_gray4, sizeof(lcdlogo_128x8_gray4));
 	else if (lcd->bpp == 16) {
-		unsigned char logo[sizeof(lcdlogo_96x7_mono) * 16];
+		unsigned int scale_factor = lcd_scale_factor(lcd);
+		unsigned char logo[sizeof(lcdlogo_96x7_mono) * 16 * scale_factor];
 		unsigned short *wptr = (unsigned short *)logo;
-		unsigned int i, j;
+		unsigned int i, j, k, pixel;
 		for (i = 0; i < sizeof(lcdlogo_96x7_mono); i++) {
 			for (j = 0; j < 8; j++) {
 				if (lcdlogo_96x7_mono[i] & (1 << (7 - j)))
-					*wptr++ = 0xffff;
+					pixel = 0xffff;
 				else
-					*wptr++ = 0;
+					pixel = 0;
+				for (k = 0; k < scale_factor; k++)
+					*wptr++ = pixel;
 			}
 		}
 		for (i = 0; i < 7; i++) {
-			lcd_write(lcd, &logo[i * 96 * 2], 96 * 2);
-			lcd_seek(lcd, lcd->stride, SEEK_CUR);
+			for (j = 0; j < scale_factor; j++) {
+				lcd_write(lcd, &logo[i * 96 * 2 * scale_factor], 96 * 2 * scale_factor);
+				lcd_seek(lcd, lcd->stride, SEEK_CUR);
+			}
 		}
 	} else
 		abort();
@@ -351,8 +362,9 @@ void lcd_get_logo_size(struct lcd *lcd, unsigned int *width, unsigned int *heigh
 		*width = 128;
 		*height = 8;
 	} else if (lcd->bpp == 16) {
-		*width = 96;
-		*height = 7;
+		unsigned int scale_factor = lcd_scale_factor(lcd);
+		*width = 96 * scale_factor;
+		*height = 7 * scale_factor;
 	} else
 		abort();
 }
