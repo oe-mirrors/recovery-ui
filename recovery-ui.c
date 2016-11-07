@@ -277,6 +277,11 @@ static bool state_init(struct display_state *st, enum display_type type)
 	lcd_clear(display, st->display_height);
 
 	lcd_get_logo_size(display, &logo_width, &logo_height);
+	if (logo_width == st->display_width)
+		st->margin_left = st->margin_right = 0;
+	if (logo_height == st->display_height)
+		st->margin_top = st->margin_bottom = 0;
+
 	lcd_set_x(display, (st->display_width - logo_width) / 2);
 	lcd_set_y(display, st->margin_top);
 
