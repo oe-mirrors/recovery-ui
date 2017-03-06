@@ -11,8 +11,12 @@ sysconfdir ?= $(prefix)/etc
 localstatedir ?= $(prefix)/var
 runstatedir ?= $(localstatedir)/run
 
-override CFLAGS := $(CFLAGS) -Wall -Wextra -std=c99
+LIBMNL_CFLAGS := $(shell pkg-config --cflags libmnl)
+LIBMNL_LIBS := $(shell pkg-config --libs libmnl)
+
+override CFLAGS := $(CFLAGS) $(LIBMNL_CFLAGS) -Wall -Wextra -std=c99
 override CPPFLAGS := $(CPPFLAGS) -DNDEBUG -MD
+override LDLIBS := $(LIBMNL_LIBS)
 
 INITSCRIPT := recovery-ui.init
 TARGETS := recovery-ui

@@ -17,6 +17,8 @@
 #include <sys/timerfd.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <libmnl/libmnl.h>
+#include <linux/rtnetlink.h>
 #include "lcd.h"
 
 static bool hostname_is_blacklisted(const char *host)
@@ -408,6 +410,41 @@ static void state_exit(struct display_state *st)
 	lcd_release(display);
 }
 
+static int mnl_event(const struct nlmsghdr *nlh, void *data)
+{
+	struct rtmsg *rtm = mnl_nlmsg_get_payload(nlh);
+	bool *update = data;
+
+	switch (nlh->nlmsg_type) {
+	case RTM_NEWROUTE:
+	case RTM_DELROUTE:
+		break;
+	default:
+		return MNL_CB_OK;
+	}
+
+	switch (rtm->rtm_family) {
+	case AF_INET:
+		if (rtm->rtm_dst_len == 32)
+			return MNL_CB_OK;
+		break;
+	case AF_INET6:
+		if (rtm->rtm_dst_len == 128)
+			return MNL_CB_OK;
+		break;
+	default:
+		return MNL_CB_OK;
+	}
+
+	if (rtm->rtm_table != RT_TABLE_MAIN ||
+	    rtm->rtm_scope >= RT_SCOPE_HOST ||
+	    rtm->rtm_type != RTN_UNICAST)
+		return MNL_CB_OK;
+
+	*update = true;
+	return MNL_CB_OK;
+}
+
 #define MAX_EVENTS (DISPLAY_TYPE_MAX + 1)
 
 int main(void)
@@ -424,6 +461,9 @@ int main(void)
 	int fifofd;
 	char linebuf[1024];
 	size_t pos = 0;
+	bool update = true;
+	struct mnl_socket *nl;
+	int mnlfd;
 
 	epollfd = epoll_create1(EPOLL_CLOEXEC);
 	if (epollfd < 0) {
@@ -431,11 +471,25 @@ int main(void)
 		return 1;
 	}
 
-	timerfd = timer_add(1000);
+	timerfd = timer_add(0);
 	if (timerfd < 0)
 		return 1;
 
 	epoll_add(epollfd, timerfd, NULL);
+
+	nl = mnl_socket_open2(NETLINK_ROUTE, SOCK_NONBLOCK | SOCK_CLOEXEC);
+	if (nl == NULL) {
+		perror("mnl_socket_open");
+		return 1;
+	}
+
+	if (mnl_socket_bind(nl, RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE, MNL_SOCKET_AUTOPID) < 0) {
+		perror("mnl_socket_bind");
+		return 1;
+	}
+
+	mnlfd = mnl_socket_get_fd(nl);
+	epoll_add(epollfd, mnlfd, NULL);
 
 	if (stat(fifo, &st) < 0 || !S_ISFIFO(st.st_mode)) {
 		unlink(fifo);
@@ -457,6 +511,24 @@ int main(void)
 		struct epoll_event events[MAX_EVENTS];
 		int i, nfds;
 
+		if (update) {
+			family = read_ifaddr(host, sizeof(host));
+			for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++) {
+				if (family == AF_UNSPEC)
+					state_print_wait_msg(&state[type], n);
+				else
+					state_print_url(&state[type], family, host);
+			}
+			n++;
+
+			if (family == AF_UNSPEC)
+				timer_set(timerfd, 1000);
+			else
+				timer_set(timerfd, 0);
+
+			update = false;
+		}
+
 		nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
 		if (nfds == -1) {
 			perror("epoll_wait");
@@ -465,19 +537,16 @@ int main(void)
 
 		for (i = 0; i < nfds; i++) {
 			if (events[i].data.fd == timerfd) {
-				// If we have an address, update every 30 seconds,
-				// otherwise retry every second.
-				family = read_ifaddr(host, sizeof(host));
-				if (family == AF_UNSPEC) {
-					timer_set(timerfd, 1000);
-					for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
-						state_print_wait_msg(&state[type], n);
-					n++;
-				} else {
-					timer_set(timerfd, 30000);
-					for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
-						state_print_url(&state[type], family, host);
-				}
+				update = true;
+			} else if (events[i].data.fd == mnlfd) {
+				char mnlbuf[MNL_SOCKET_BUFFER_SIZE];
+				ssize_t ret;
+				do {
+					ret = mnl_socket_recvfrom(nl, mnlbuf, sizeof(mnlbuf));
+					if (ret <= 0)
+						break;
+					ret = mnl_cb_run(mnlbuf, ret, 0, 0, mnl_event, &update);
+				} while (ret > MNL_CB_STOP);
 			} else if (events[i].data.fd == fifofd) {
 				char *s;
 				for (;;) {
