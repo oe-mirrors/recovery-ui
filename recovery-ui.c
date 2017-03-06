@@ -163,8 +163,6 @@ static int read_ifaddr(char *host, unsigned int hostlen)
 	family = read_ifaddr_by_family(AF_INET, host, hostlen);
 	if (family == AF_UNSPEC)
 		family = read_ifaddr_by_family(AF_INET6, host, hostlen);
-	if (family == AF_UNSPEC)
-		family = read_ifaddr_by_family(AF_UNSPEC, host, hostlen);
 
 	return family;
 }
