@@ -1,9 +1,11 @@
 /*
- * Copyright (C) 2014 Dream Property GmbH, Germany
+ * Copyright (C) 2017 Dream Property GmbH, Germany
  *                    http://www.dream-multimedia-tv.de/
  */
 
 #define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netdb.h>
@@ -11,7 +13,9 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/timerfd.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include "lcd.h"
 
@@ -198,7 +202,7 @@ static int timer_add(unsigned int ms)
 	return fd;
 }
 
-static bool epoll_add(int epollfd, int fd, void *ptr)
+static void __epoll_ctl(int epollfd, int op, int fd, void *ptr)
 {
 	struct epoll_event ev;
 
@@ -208,12 +212,18 @@ static bool epoll_add(int epollfd, int fd, void *ptr)
 	else
 		ev.data.ptr = ptr;
 
-	if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &ev) == -1) {
-		perror("EPOLL_CTL_ADD");
-		return false;
-	}
+	if (epoll_ctl(epollfd, op, fd, &ev) == -1)
+		perror("epoll_ctl");
+}
 
-	return true;
+static inline void epoll_add(int epollfd, int fd, void *ptr)
+{
+	__epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, ptr);
+}
+
+static inline void epoll_del(int epollfd, int fd)
+{
+	__epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
 }
 
 struct display_state {
@@ -301,6 +311,28 @@ static bool state_init(struct display_state *st, enum display_type type)
 	return true;
 }
 
+static void state_print_msg(struct display_state *st, const char *msg)
+{
+	struct lcd *display = st->display;
+	size_t len;
+
+	if (display == NULL)
+		return;
+
+	lcd_clear(display, st->font_height);
+
+	len = strlen(msg);
+	if (len > st->max_chars) {
+		lcd_set_x(display, 0);
+		lcd_printf(display, "%.*s...", st->max_chars - 3, msg);
+	} else {
+		lcd_set_x(display, (st->display_width - len * st->font_width) / 2);
+		lcd_printf(display, "%s", msg);
+	}
+
+	lcd_update(display);
+}
+
 static void state_print_wait_msg(struct display_state *st, unsigned int n)
 {
 	static const char wait_msg[] = "Waiting for DHCP";
@@ -380,13 +412,18 @@ static void state_exit(struct display_state *st)
 
 int main(void)
 {
+	const char fifo[] = "/run/recovery-ui.fifo";
 	char host[NI_MAXHOST];
 	struct display_state state[DISPLAY_TYPE_MAX];
 	int family = AF_UNSPEC;
 	unsigned int n = 0;
 	enum display_type type;
+	struct stat st;
 	int epollfd;
 	int timerfd;
+	int fifofd;
+	char linebuf[1024];
+	size_t pos = 0;
 
 	epollfd = epoll_create1(EPOLL_CLOEXEC);
 	if (epollfd < 0) {
@@ -399,6 +436,18 @@ int main(void)
 		return 1;
 
 	epoll_add(epollfd, timerfd, NULL);
+
+	if (stat(fifo, &st) < 0 || !S_ISFIFO(st.st_mode)) {
+		unlink(fifo);
+		if (mkfifo(fifo, 0600) < 0)
+			perror("mkfifo");
+	}
+
+	fifofd = open(fifo, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+	if (fifofd < 0)
+		perror("fifo");
+	else
+		epoll_add(epollfd, fifofd, NULL);
 
 	for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
 		if (state_init(&state[type], type))
@@ -429,6 +478,48 @@ int main(void)
 					for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
 						state_print_url(&state[type], family, host);
 				}
+			} else if (events[i].data.fd == fifofd) {
+				char *s;
+				for (;;) {
+					ssize_t ret = read(fifofd, &linebuf[pos], sizeof(linebuf) - pos - 1);
+					if (ret < 0) {
+						if (errno != EAGAIN)
+							perror("read");
+						break;
+					}
+					if (ret == 0) {
+						epoll_del(epollfd, fifofd);
+						close(fifofd);
+						pos = 0;
+
+						fifofd = open(fifo, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+						if (fifofd < 0)
+							perror("fifo");
+						else
+							epoll_add(epollfd, fifofd, NULL);
+						break;
+					}
+					pos += ret;
+					if (pos + 1 == sizeof(linebuf) && linebuf[pos] != '\n') {
+						strcpy(linebuf, "...");
+						pos = 3;
+						break;
+					}
+					linebuf[pos] = '\0';
+					s = linebuf;
+					for (;;) {
+						char *p = strsep(&s, "\n");
+						if (s == NULL) {
+							pos = strlen(p);
+							if (pos > 0 && p != linebuf)
+								memmove(linebuf, p, pos + 1);
+							break;
+						}
+						for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
+							state_print_msg(&state[type], p);
+					}
+				}
+				timer_set(timerfd, 30000);
 			} else {
 				struct display_state *st = events[i].data.ptr;
 				state_print_url(st, family, host);
