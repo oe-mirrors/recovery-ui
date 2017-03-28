@@ -1,4 +1,17 @@
 #!/bin/sh
+#
+# Copyright (C) 2017 Dream Property GmbH, Germany
+#                    https://dreambox.de/
+#
+### BEGIN INIT INFO
+# Provides:          recovery_ui
+# Required-Start:    $local_fs
+# Required-Stop:     $local_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Start recovery-ui at boot time
+# Description:       Enable service provided by recovery-ui.
+### END INIT INFO
 
 test -x @bindir@/recovery-ui || exit 0
 
