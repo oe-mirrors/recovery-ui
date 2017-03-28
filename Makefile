@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
 #
-# Copyright (C) 2016 Dream Property GmbH, Germany
-#                    http://www.dream-multimedia-tv.de/
+# Copyright (C) 2017 Dream Property GmbH, Germany
+#                    https://dreambox.de/
 #
 
 prefix ?= /usr/local
@@ -11,19 +11,19 @@ sysconfdir ?= $(prefix)/etc
 localstatedir ?= $(prefix)/var
 runstatedir ?= $(localstatedir)/run
 
-LIBMNL_CFLAGS := $(shell pkg-config --cflags libmnl)
-LIBMNL_LIBS := $(shell pkg-config --libs libmnl)
+PKGCONFIG_CFLAGS := $(shell pkg-config --cflags libmnl liblzma)
+PKGCONFIG_LIBS := $(shell pkg-config --libs libmnl liblzma)
 
-override CFLAGS := $(CFLAGS) $(LIBMNL_CFLAGS) -Wall -Wextra -std=c99
+override CFLAGS := $(CFLAGS) $(PKGCONFIG_CFLAGS) -Wall -Wextra -std=c99
 override CPPFLAGS := $(CPPFLAGS) -DNDEBUG -MD
-override LDLIBS := $(LIBMNL_LIBS)
+override LDLIBS := $(PKGCONFIG_LIBS)
 
 INITSCRIPT := recovery-ui.init
 TARGETS := recovery-ui
 
 default: $(INITSCRIPT) $(TARGETS)
 
-recovery-ui: recovery-ui.o lcd.o
+recovery-ui: recovery-ui.o lcd.o unxz.o
 
 recovery-ui.init: recovery-ui.init.in Makefile
 	sed -e 's,@bindir@,$(bindir),g' \

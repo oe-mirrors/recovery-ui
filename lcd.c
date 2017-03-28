@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2016 Dream Property GmbH, Germany
- *                    http://www.dream-multimedia-tv.de/
+ * Copyright (C) 2017 Dream Property GmbH, Germany
+ *                    https://dreambox.de/
  */
 
 #define _GNU_SOURCE
@@ -15,8 +15,9 @@
 #include "lcd.h"
 #include "lcdfont.h"
 #include "lcdlogo_128x8_gray4.h"
-#include "lcdlogo_400x240_rgb565.h"
+#include "lcdlogo_400x240_rgb565_xz.h"
 #include "lcdlogo_96x7_mono.h"
+#include "unxz.h"
 
 #define ARRAY_SIZE(x)	(sizeof((x)) / sizeof(*(x)))
 
@@ -35,7 +36,12 @@ struct lcd {
 	unsigned char *data;
 	unsigned char *background;
 	unsigned int fgcolor;
+	const unsigned char *logo;
+	size_t logo_size;
 };
+
+static unsigned char lcdlogo_400x240_rgb565[192000];
+static bool lcdlogo_400x240_rgb565_decompressed;
 
 static unsigned long ulong_from_file(const char *filename, unsigned long dflt)
 {
@@ -291,12 +297,32 @@ struct lcd *lcd_open(void)
 
 struct lcd *display_open(enum display_type type)
 {
-	if (type == DISPLAY_TYPE_OLED)
-		return lcd_open();
-	if (type == DISPLAY_TYPE_HDMI)
-		return hdmi_open();
+	struct lcd *lcd = NULL;
 
-	return NULL;
+	if (type == DISPLAY_TYPE_OLED)
+		lcd = lcd_open();
+	else if (type == DISPLAY_TYPE_HDMI)
+		lcd = hdmi_open();
+
+	if (lcd != NULL) {
+		if (lcd->width == 128 && lcd->bpp == 4) {
+			lcd->logo = lcdlogo_128x8_gray4;
+			lcd->logo_size = sizeof(lcdlogo_128x8_gray4);
+		} else if (lcd->width == 400 && lcd->height == 240 && lcd->bpp == 16) {
+			if (!lcdlogo_400x240_rgb565_decompressed) {
+				unxz(lcdlogo_400x240_rgb565, sizeof(lcdlogo_400x240_rgb565),
+					lcdlogo_400x240_rgb565_xz, sizeof(lcdlogo_400x240_rgb565_xz));
+				lcdlogo_400x240_rgb565_decompressed = true;
+			}
+			lcd->logo = lcdlogo_400x240_rgb565;
+			lcd->logo_size = sizeof(lcdlogo_400x240_rgb565);
+		} else {
+			lcd->logo = lcdlogo_96x7_mono;
+			lcd->logo_size = sizeof(lcdlogo_96x7_mono);
+		}
+	}
+
+	return lcd;
 }
 
 void lcd_release(struct lcd *lcd)
@@ -359,19 +385,15 @@ void lcd_save_background(struct lcd *lcd)
 
 void lcd_write_logo(struct lcd *lcd)
 {
-	if (lcd->width == 128 && lcd->bpp == 4)
-		lcd_write(lcd, lcdlogo_128x8_gray4, sizeof(lcdlogo_128x8_gray4));
-	else if (lcd->width == 400 && lcd->height == 240 && lcd->bpp == 16)
-		lcd_write(lcd, lcdlogo_400x240_rgb565, sizeof(lcdlogo_400x240_rgb565));
-	else if (lcd->bpp == 16) {
+	if (lcd->bpp == 16 && (lcd->width != 400 || lcd->height != 240)) {
 		unsigned int scale_factor = lcd_scale_factor(lcd);
-		unsigned char logo[sizeof(lcdlogo_96x7_mono) * 16 * scale_factor];
+		unsigned char logo[lcd->logo_size * 16 * scale_factor];
 		unsigned short *wptr = (unsigned short *)logo;
 		unsigned int fgcolor = xrgb8888_to_rgb565(lcd->fgcolor);
 		unsigned int i, j, k, pixel;
-		for (i = 0; i < sizeof(lcdlogo_96x7_mono); i++) {
+		for (i = 0; i < lcd->logo_size; i++) {
 			for (j = 0; j < 8; j++) {
-				if (lcdlogo_96x7_mono[i] & (1 << (7 - j)))
+				if (lcd->logo[i] & (1 << (7 - j)))
 					pixel = fgcolor;
 				else
 					pixel = 0;
@@ -385,8 +407,9 @@ void lcd_write_logo(struct lcd *lcd)
 				lcd_seek(lcd, lcd->stride, SEEK_CUR);
 			}
 		}
-	} else
-		abort();
+	} else {
+		lcd_write(lcd, lcd->logo, lcd->logo_size);
+	}
 }
 
 void lcd_get_logo_size(struct lcd *lcd, unsigned int *width, unsigned int *height)
