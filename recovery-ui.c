@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2017 Dream Property GmbH, Germany
- *                    http://www.dream-multimedia-tv.de/
+ *                    https://dreambox.de/
  */
 
 #define _GNU_SOURCE
@@ -10,6 +10,7 @@
 #include <net/if.h>
 #include <netdb.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -240,6 +241,7 @@ struct display_state {
 	int count;
 	int incr;
 	int timerfd;
+	char *msg;
 };
 
 static bool state_init(struct display_state *st, enum display_type type)
@@ -311,28 +313,6 @@ static bool state_init(struct display_state *st, enum display_type type)
 	return true;
 }
 
-static void state_print_msg(struct display_state *st, const char *msg)
-{
-	struct lcd *display = st->display;
-	size_t len;
-
-	if (display == NULL)
-		return;
-
-	lcd_clear(display, st->font_height);
-
-	len = strlen(msg);
-	if (len > st->max_chars) {
-		lcd_set_x(display, 0);
-		lcd_printf(display, "%.*s...", st->max_chars - 3, msg);
-	} else {
-		lcd_set_x(display, (st->display_width - len * st->font_width) / 2);
-		lcd_printf(display, "%s", msg);
-	}
-
-	lcd_update(display);
-}
-
 static void state_print_wait_msg(struct display_state *st, unsigned int n)
 {
 	static const char wait_msg[] = "Waiting for DHCP";
@@ -352,27 +332,30 @@ static void state_print_wait_msg(struct display_state *st, unsigned int n)
 	lcd_update(display);
 }
 
-static void state_print_url(struct display_state *st, int family, const char *host)
+static void state_scroll_msg(struct display_state *st, const char *msg)
 {
 	struct lcd *display = st->display;
-	size_t hostlen;
+	unsigned char len;
 	int extra_pixels;
 
 	if (display == NULL)
 		return;
 
-	hostlen = strlen(host) + 8;
-	if (family == AF_INET6)
-		hostlen += 2;
+	if (msg != NULL) {
+		free(st->msg);
+		st->msg = strdup(msg);
+	}
 
-	if (hostlen <= st->max_chars) {
+	len = strlen(st->msg);
+
+	if (len <= st->max_chars) {
 		timer_set(st->timerfd, 0);
 
-		lcd_set_x(display, (st->display_width - hostlen * st->font_width) / 2);
+		lcd_set_x(display, (st->display_width - len * st->font_width) / 2);
 	} else {
 		timer_set(st->timerfd, 100);
 
-		extra_pixels = (hostlen * st->font_width) - st->display_width;
+		extra_pixels = (len * st->font_width) - st->display_width;
 		// length might have changed, reset
 		if (st->count < 0 || st->count > extra_pixels) {
 			st->count = 0;
@@ -389,13 +372,28 @@ static void state_print_url(struct display_state *st, int family, const char *ho
 	}
 
 	lcd_clear(display, st->font_height);
+	lcd_puts(display, st->msg);
+	lcd_update(display);
+}
+
+static void state_print_url(struct display_state *st, int family, const char *host)
+{
+	const char *template;
+	char *str;
 
 	if (family == AF_INET6)
-		lcd_printf(display, "http://[%s]/", host);
+		template = "http://[%s]/";
 	else
-		lcd_printf(display, "http://%s/", host);
+		template = "http://%s/";
 
-	lcd_update(display);
+	if (asprintf(&str, template, host) < 0) {
+		perror("asprintf");
+		return;
+	}
+
+	state_scroll_msg(st, str);
+
+	free(str);
 }
 
 static void state_exit(struct display_state *st)
@@ -406,6 +404,7 @@ static void state_exit(struct display_state *st)
 		return;
 
 	lcd_release(display);
+	free(st->msg);
 }
 
 static int mnl_event(const struct nlmsghdr *nlh, void *data)
@@ -448,9 +447,7 @@ static int mnl_event(const struct nlmsghdr *nlh, void *data)
 int main(void)
 {
 	const char fifo[] = "/run/recovery-ui.fifo";
-	char host[NI_MAXHOST];
 	struct display_state state[DISPLAY_TYPE_MAX];
-	int family = AF_UNSPEC;
 	unsigned int n = 0;
 	enum display_type type;
 	struct stat st;
@@ -510,6 +507,9 @@ int main(void)
 		int i, nfds;
 
 		if (update) {
+			char host[NI_MAXHOST];
+			int family = AF_UNSPEC;
+
 			family = read_ifaddr(host, sizeof(host));
 			for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++) {
 				if (family == AF_UNSPEC)
@@ -583,13 +583,13 @@ int main(void)
 							break;
 						}
 						for (type = DISPLAY_TYPE_MIN; type < DISPLAY_TYPE_MAX; type++)
-							state_print_msg(&state[type], p);
+							state_scroll_msg(&state[type], p);
 					}
 				}
 				timer_set(timerfd, 30000);
 			} else {
 				struct display_state *st = events[i].data.ptr;
-				state_print_url(st, family, host);
+				state_scroll_msg(st, NULL);
 			}
 		}
 	}
