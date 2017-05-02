@@ -8,10 +8,14 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <unistd.h>
+#include <linux/fb.h>
 #include "lcd.h"
 #include "lcdfont.h"
 #include "lcdlogo_128x8_gray4.h"
@@ -21,11 +25,14 @@
 
 #define ARRAY_SIZE(x)	(sizeof((x)) / sizeof(*(x)))
 
+struct color {
+	unsigned int offset;
+	unsigned int size;
+};
+
 struct lcd {
 	enum display_type type;
-	union {
-		int fd;
-	};
+	int fd;
 	unsigned int width;
 	unsigned int height;
 	unsigned int bpp;
@@ -33,11 +40,25 @@ struct lcd {
 	unsigned int size;
 	int x;
 	int y;
-	unsigned char *data;
-	unsigned char *background;
+	union {
+		void *data;
+		uint8_t *data8;
+		uint16_t *data16;
+		uint32_t *data32;
+	};
+	union {
+		void *background;
+		uint8_t *background8;
+		uint16_t *background16;
+		uint32_t *background32;
+	};
 	unsigned int fgcolor;
 	const unsigned char *logo;
 	size_t logo_size;
+	struct color red;
+	struct color green;
+	struct color blue;
+	struct color alpha;
 };
 
 static unsigned char lcdlogo_400x240_rgb565[192000];
@@ -137,18 +158,16 @@ unsigned int lcd_height(struct lcd *lcd)
 
 static inline unsigned int lcd_scale_factor(struct lcd *lcd)
 {
-	return (lcd->bpp == 16 && lcd->width >= 400) ? 2 : 1;
+	return 1 + (lcd->height + 120) / 240;
 }
 
 unsigned int lcd_font_width(struct lcd *lcd)
 {
-	(void)lcd;
 	return 6 * lcd_scale_factor(lcd);
 }
 
 unsigned int lcd_font_height(struct lcd *lcd)
 {
-	(void)lcd;
 	return 8 * lcd_scale_factor(lcd);
 }
 
@@ -166,9 +185,9 @@ static void lcd_putc_4bpp(struct lcd *lcd, char c)
 			data_index = lcd->y * lcd->stride + lcd->x * lcd->bpp / 8;
 			for (row = 0; row < font_height; row++) {
 				if (lcdfont[font_index] & (1 << row))
-					lcd->data[data_index] |= mask;
+					lcd->data8[data_index] |= mask;
 				else
-					lcd->data[data_index] &= ~mask;
+					lcd->data8[data_index] &= ~mask;
 				data_index += lcd->stride;
 			}
 		}
@@ -178,25 +197,12 @@ static void lcd_putc_4bpp(struct lcd *lcd, char c)
 	}
 }
 
-static inline unsigned int xrgb8888_to_rgb565(unsigned int pixel)
-{
-	return (((pixel & 0x00f80000) >> 8) |
-		((pixel & 0x0000fc00) >> 5) |
-		((pixel & 0x000000f8) >> 3));
-}
-
 static void lcd_putc_16bpp(struct lcd *lcd, char c)
 {
 	unsigned int row, column, data_index, font_index;
 	unsigned int font_width = lcd_font_width(lcd);
 	unsigned int font_height = lcd_font_height(lcd);
-	unsigned int value = xrgb8888_to_rgb565(lcd->fgcolor);
 	unsigned int scale_factor = lcd_scale_factor(lcd);
-	const unsigned char *pixel;
-	const unsigned char foreground[2] = {
-		(value >> 0) & 0xff,
-		(value >> 8) & 0xff,
-	};
 
 	font_index = (unsigned char)c * font_width;
 	for (column = 0; column < font_width; column++) {
@@ -204,10 +210,33 @@ static void lcd_putc_16bpp(struct lcd *lcd, char c)
 			data_index = lcd->y * lcd->stride + lcd->x * lcd->bpp / 8;
 			for (row = 0; row < font_height; row++) {
 				if (lcdfont[font_index / scale_factor] & (1 << (row / scale_factor)))
-					pixel = foreground;
+					lcd->data16[data_index / 2] = lcd->fgcolor;
 				else
-					pixel = &lcd->background[data_index];
-				memcpy(&lcd->data[data_index], pixel, 2);
+					lcd->data16[data_index / 2] = lcd->background16[data_index / 2];
+				data_index += lcd->stride;
+			}
+		}
+		font_index++;
+		lcd->x++;
+	}
+}
+
+static void lcd_putc_32bpp(struct lcd *lcd, char c)
+{
+	unsigned int row, column, data_index, font_index;
+	unsigned int font_width = lcd_font_width(lcd);
+	unsigned int font_height = lcd_font_height(lcd);
+	unsigned int scale_factor = lcd_scale_factor(lcd);
+
+	font_index = (unsigned char)c * font_width;
+	for (column = 0; column < font_width; column++) {
+		if (lcd->x >= 0 && (size_t)lcd->x < lcd->width) {
+			data_index = lcd->y * lcd->stride + lcd->x * lcd->bpp / 8;
+			for (row = 0; row < font_height; row++) {
+				if (lcdfont[font_index / scale_factor] & (1 << (row / scale_factor)))
+					lcd->data32[data_index / 4] = lcd->fgcolor;
+				else
+					lcd->data32[data_index / 4] = lcd->background32[data_index / 4];
 				data_index += lcd->stride;
 			}
 		}
@@ -222,6 +251,8 @@ void lcd_putc(struct lcd *lcd, char c)
 		lcd_putc_4bpp(lcd, c);
 	else if (lcd->bpp == 16)
 		lcd_putc_16bpp(lcd, c);
+	else if (lcd->bpp == 32)
+		lcd_putc_32bpp(lcd, c);
 	else
 		abort();
 }
@@ -253,6 +284,69 @@ int lcd_printf(struct lcd *lcd, const char *fmt, ...)
 struct lcd *hdmi_open(void)
 {
 	struct lcd *lcd = NULL;
+	const char device[] = "/dev/fb0";
+	struct fb_var_screeninfo var;
+	struct fb_fix_screeninfo fix;
+	size_t size;
+	void *buffer;
+	int fd;
+
+	fd = open(device, O_RDWR | O_CLOEXEC);
+	if (fd < 0) {
+		fprintf(stderr, "lcd: can't open %s: %m\n", device);
+		return NULL;
+	}
+
+	if (ioctl(fd, FBIOGET_VSCREENINFO, &var) < 0) {
+		perror("FBIOGET_VSCREENINFO");
+		close(fd);
+		return NULL;
+	}
+
+	if (ioctl(fd, FBIOGET_FSCREENINFO, &fix) < 0) {
+		perror("FBIOGET_FSCREENINFO");
+		close(fd);
+		return NULL;
+	}
+
+	size = fix.line_length * var.yres;
+
+	buffer = mmap(NULL, fix.line_length * var.yres_virtual, PROT_WRITE, MAP_SHARED, fd, 0);
+	if (buffer == MAP_FAILED) {
+		perror("mmap");
+		close(fd);
+		return NULL;
+	}
+
+	lcd = malloc(sizeof(struct lcd) + size);
+	if (lcd == NULL) {
+		munmap(buffer, size);
+		close(fd);
+		return NULL;
+	}
+
+	memset(lcd, 0, sizeof(struct lcd) + size);
+	lcd->fd = fd;
+	lcd->width = var.xres;
+	lcd->height = var.yres;
+	lcd->bpp = var.bits_per_pixel;
+	lcd->stride = fix.line_length;
+	lcd->data = buffer + lcd->stride * var.yoffset;
+
+	lcd->red.offset = var.red.offset;
+	lcd->red.size = var.red.length;
+	lcd->green.offset = var.green.offset;
+	lcd->green.size = var.green.length;
+	lcd->blue.offset = var.blue.offset;
+	lcd->blue.size = var.blue.length;
+	lcd->alpha.offset = var.transp.offset;
+	lcd->alpha.size = var.transp.length;
+
+	lcd->type = DISPLAY_TYPE_HDMI;
+	lcd->size = size;
+	lcd->background = (unsigned char *)&lcd[1];
+	memset(lcd->background, 0, size);
+	lcd->fgcolor = 0xffffffff;
 
 	return lcd;
 }
@@ -288,9 +382,18 @@ struct lcd *lcd_open(void)
 	lcd->stride = stride;
 	lcd->size = size;
 	lcd->data = (unsigned char *)&lcd[1];
-	lcd->background = &lcd->data[size];
+	lcd->background = &lcd->data8[size];
 	memset(lcd->background, 0, size);
 	lcd->fgcolor = 0xffffffff;
+
+	if (bpp == 16) {
+		lcd->blue.offset = 0;
+		lcd->blue.size = 5;
+		lcd->green.offset = lcd->blue.size;
+		lcd->green.size = 6;
+		lcd->red.offset = lcd->blue.size + lcd->green.size;
+		lcd->red.size = 5;
+	}
 
 	return lcd;
 }
@@ -327,7 +430,7 @@ struct lcd *display_open(enum display_type type)
 
 void lcd_release(struct lcd *lcd)
 {
-	if (lcd->type == DISPLAY_TYPE_OLED)
+	if (lcd->fd >= 0)
 		close(lcd->fd);
 	free(lcd);
 }
@@ -354,7 +457,7 @@ void lcd_clear(struct lcd *lcd, unsigned int height)
 		height = lcd->height - y;
 
 	if ((int)height > 0)
-		memcpy(&lcd->data[lcd->stride * y], &lcd->background[lcd->stride * y], lcd->stride * height);
+		memcpy(&lcd->data8[lcd->stride * y], &lcd->background8[lcd->stride * y], lcd->stride * height);
 }
 
 static ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count)
@@ -366,7 +469,7 @@ static ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count)
 		count = lcd->size - offset;
 
 	if ((ssize_t)count >= 0) {
-		memcpy(&lcd->data[offset], buf, count);
+		memcpy(&lcd->data8[offset], buf, count);
 		return count;
 	}
 
@@ -375,7 +478,15 @@ static ssize_t lcd_write(struct lcd *lcd, const void *buf, size_t count)
 
 void lcd_set_fgcolor(struct lcd *lcd, unsigned int argb)
 {
-	lcd->fgcolor = argb;
+	unsigned int a = ((argb >> 24) & 0xff) >> (8 - lcd->alpha.size);
+	unsigned int r = ((argb >> 16) & 0xff) >> (8 - lcd->red.size);
+	unsigned int g = ((argb >>  8) & 0xff) >> (8 - lcd->green.size);
+	unsigned int b = ((argb >>  0) & 0xff) >> (8 - lcd->blue.size);
+
+	lcd->fgcolor = (a << lcd->alpha.offset) |
+	               (r << lcd->red.offset) |
+	               (g << lcd->green.offset) |
+	               (b << lcd->blue.offset);
 }
 
 void lcd_save_background(struct lcd *lcd)
@@ -389,12 +500,11 @@ void lcd_write_logo(struct lcd *lcd)
 		unsigned int scale_factor = lcd_scale_factor(lcd);
 		unsigned char logo[lcd->logo_size * 16 * scale_factor];
 		unsigned short *wptr = (unsigned short *)logo;
-		unsigned int fgcolor = xrgb8888_to_rgb565(lcd->fgcolor);
 		unsigned int i, j, k, pixel;
 		for (i = 0; i < lcd->logo_size; i++) {
 			for (j = 0; j < 8; j++) {
 				if (lcd->logo[i] & (1 << (7 - j)))
-					pixel = fgcolor;
+					pixel = lcd->fgcolor;
 				else
 					pixel = 0;
 				for (k = 0; k < scale_factor; k++)
@@ -404,6 +514,27 @@ void lcd_write_logo(struct lcd *lcd)
 		for (i = 0; i < 7; i++) {
 			for (j = 0; j < scale_factor; j++) {
 				lcd_write(lcd, &logo[i * 96 * 2 * scale_factor], 96 * 2 * scale_factor);
+				lcd_seek(lcd, lcd->stride, SEEK_CUR);
+			}
+		}
+	} else if (lcd->bpp == 32) {
+		unsigned int scale_factor = lcd_scale_factor(lcd);
+		unsigned char logo[lcd->logo_size * 32 * scale_factor];
+		unsigned int *wptr = (unsigned int *)logo;
+		unsigned int i, j, k, pixel;
+		for (i = 0; i < lcd->logo_size; i++) {
+			for (j = 0; j < 8; j++) {
+				if (lcd->logo[i] & (1 << (7 - j)))
+					pixel = lcd->fgcolor;
+				else
+					pixel = 0;
+				for (k = 0; k < scale_factor; k++)
+					*wptr++ = pixel;
+			}
+		}
+		for (i = 0; i < 7; i++) {
+			for (j = 0; j < scale_factor; j++) {
+				lcd_write(lcd, &logo[i * 96 * 4 * scale_factor], 96 * 4 * scale_factor);
 				lcd_seek(lcd, lcd->stride, SEEK_CUR);
 			}
 		}
@@ -420,7 +551,7 @@ void lcd_get_logo_size(struct lcd *lcd, unsigned int *width, unsigned int *heigh
 	} else if (lcd->width == 400 && lcd->height == 240 && lcd->bpp == 16) {
 		*width = 400;
 		*height = 240;
-	} else if (lcd->bpp == 16) {
+	} else if (lcd->bpp >= 16) {
 		unsigned int scale_factor = lcd_scale_factor(lcd);
 		*width = 96 * scale_factor;
 		*height = 7 * scale_factor;
