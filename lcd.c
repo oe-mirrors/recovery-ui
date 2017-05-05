@@ -5,6 +5,8 @@
 
 #define _GNU_SOURCE
 #include <assert.h>
+#include <byteswap.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -59,31 +61,43 @@ struct lcd {
 	struct color green;
 	struct color blue;
 	struct color alpha;
+	bool byteswap;
 };
 
 static unsigned char lcdlogo_400x240_rgb565[192000];
 static bool lcdlogo_400x240_rgb565_decompressed;
 
-static unsigned long ulong_from_file(const char *filename, unsigned long dflt)
+static char *string_from_file(const char *filename)
 {
-	unsigned long value;
-	char *data = 0;
-	char *end = 0;
-	size_t n = 0;
-	ssize_t ret;
+	char *data = NULL;
 	FILE *f;
 
 	f = fopen(filename, "r");
-	if (f == NULL)
-		return dflt;
+	if (f != NULL) {
+		size_t n = 0;
+		if (getline(&data, &n, f) < 0)
+			perror("getline");
+		fclose(f);
 
-	ret = getline(&data, &n, f);
-	if (ret < 0) {
-		perror("getline");
-		abort();
+		if (data != NULL) {
+			n = strlen(data);
+			while (n > 0 && isspace(data[--n]))
+				data[n] = '\0';
+		}
 	}
 
-	fclose(f);
+	return data;
+}
+
+static unsigned long ulong_from_file(const char *filename, unsigned long dflt)
+{
+	unsigned long value;
+	char *end = NULL;
+	char *data;
+
+	data = string_from_file(filename);
+	if (data == NULL)
+		return dflt;
 
 	errno = 0;
 	value = strtoul(data, &end, 16);
@@ -360,6 +374,7 @@ struct lcd *lcd_open(void)
 	const unsigned int stride = width * bpp / 8;
 	const unsigned int size = stride * height;
 	struct lcd *lcd;
+	char *fmt;
 	int fd;
 
 	fd = open(device, O_RDWR | O_CLOEXEC);
@@ -393,6 +408,20 @@ struct lcd *lcd_open(void)
 		lcd->green.size = 6;
 		lcd->red.offset = lcd->blue.size + lcd->green.size;
 		lcd->red.size = 5;
+	}
+
+	fmt = string_from_file("/proc/stb/lcd/colorformat");
+	if (fmt != NULL) {
+		if (!strcmp(fmt, "RGB_565_BE")) {
+			lcd->red.offset = 0;
+			lcd->red.size = 5;
+			lcd->green.offset = lcd->red.size;
+			lcd->green.size = 6;
+			lcd->blue.offset = lcd->red.size + lcd->green.size;
+			lcd->blue.size = 5;
+			lcd->byteswap = true;
+		}
+		free(fmt);
 	}
 
 	return lcd;
@@ -487,6 +516,9 @@ void lcd_set_fgcolor(struct lcd *lcd, unsigned int argb)
 	               (r << lcd->red.offset) |
 	               (g << lcd->green.offset) |
 	               (b << lcd->blue.offset);
+
+	if (lcd->byteswap && lcd->bpp == 16)
+		lcd->fgcolor = bswap_16(lcd->fgcolor);
 }
 
 void lcd_save_background(struct lcd *lcd)
