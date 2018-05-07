@@ -323,6 +323,12 @@ struct lcd *hdmi_open(void)
 		return NULL;
 	}
 
+	if ((ioctl(fd, FBIOBLANK, FB_BLANK_UNBLANK) < 0) && errno != EINVAL) {
+		perror("FBIOBLANK");
+		close(fd);
+		return NULL;
+	}
+
 	size = fix.line_length * var.yres;
 
 	buffer = mmap(NULL, fix.line_length * var.yres_virtual, PROT_WRITE, MAP_SHARED, fd, 0);
