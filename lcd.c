@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/kd.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <linux/fb.h>
@@ -299,11 +300,26 @@ struct lcd *hdmi_open(void)
 {
 	struct lcd *lcd = NULL;
 	const char device[] = "/dev/fb0";
+	const char tty[] = "/dev/tty0";
 	struct fb_var_screeninfo var;
 	struct fb_fix_screeninfo fix;
 	size_t size;
 	void *buffer;
 	int fd;
+
+	fd = open(tty, O_RDWR | O_CLOEXEC);
+	if (fd < 0) {
+		fprintf(stderr, "lcd: can't open %s: %m\n", tty);
+		return NULL;
+	}
+
+	if (ioctl(fd, KDSETMODE, KD_GRAPHICS) < 0) {
+		perror("KDSETMODE");
+		close(fd);
+		return NULL;
+	}
+
+	close(fd);
 
 	fd = open(device, O_RDWR | O_CLOEXEC);
 	if (fd < 0) {
