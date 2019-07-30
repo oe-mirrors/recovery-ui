@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Dream Property GmbH, Germany
+ * Copyright (C) 2019 Dream Property GmbH, Germany
  *                    https://dreambox.de/
  */
 
@@ -116,7 +116,7 @@ static unsigned long ulong_from_file(const char *filename, unsigned long dflt)
 	return value;
 }
 
-off_t lcd_seek(struct lcd *lcd, off_t offset, int whence)
+static off_t lcd_seek(struct lcd *lcd, off_t offset, int whence)
 {
 	off_t pixels = offset * 8 / lcd->bpp;
 
@@ -260,7 +260,7 @@ static void lcd_putc_32bpp(struct lcd *lcd, char c)
 	}
 }
 
-void lcd_putc(struct lcd *lcd, char c)
+static void lcd_putc(struct lcd *lcd, char c)
 {
 	if (lcd->bpp == 4)
 		lcd_putc_4bpp(lcd, c);
