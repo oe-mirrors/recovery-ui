@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Dream Property GmbH, Germany
+ * Copyright (C) 2019 Dream Property GmbH, Germany
  *                    https://dreambox.de/
  */
 
@@ -294,14 +294,14 @@ static bool state_init(struct display_state *st, enum display_type type)
 	if (logo_height == st->display_height)
 		st->margin_top = st->margin_bottom = 0;
 
-	lcd_set_x(display, (st->display_width - logo_width) / 2);
+	lcd_set_x(display, (int)(st->display_width - logo_width) / 2);
 	lcd_set_y(display, st->margin_top);
 
 	lcd_write_logo(display);
 	lcd_save_background(display);
 	lcd_set_fgcolor(display, 0xffffd200);
 
-	lcd_set_x(display, (st->display_width - strlen(rescue_mode) * st->font_width) / 2);
+	lcd_set_x(display, (int)(st->display_width - strlen(rescue_mode) * st->font_width) / 2);
 	lcd_set_y(display, st->display_height - st->font_height * 4 - st->margin_bottom);
 
 	lcd_puts(display, rescue_mode);
