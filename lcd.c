@@ -424,6 +424,7 @@ static struct lcd *fbdev_open(const char *device, unsigned int flags, bool mappe
 			close(fd);
 			return NULL;
 		}
+		memset(buffer, 0, fix.line_length * var.yres_virtual);
 	}
 
 	lcd = malloc(sizeof(struct lcd) + size);
