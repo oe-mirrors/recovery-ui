@@ -768,6 +768,8 @@ void lcd_get_logo_size(struct lcd *lcd, unsigned int *width, unsigned int *heigh
 		unsigned int scale_factor = lcd_scale_factor(lcd);
 		*width = 96 * scale_factor;
 		*height = 7 * scale_factor;
-	} else
-		abort();
+	} else {
+		*width = 0;
+		*height = 0;
+	}
 }
