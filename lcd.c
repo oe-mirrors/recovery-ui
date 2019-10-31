@@ -408,6 +408,11 @@ static struct lcd *fbdev_open(const char *device, unsigned int flags, bool mappe
 		return NULL;
 	}
 
+	if (var.xres * var.bits_per_pixel / 8 > fix.line_length) {
+		fprintf(stderr, "WARNING: Ignoring invalid stride for %s!\n", device);
+		fix.line_length = var.xres * var.bits_per_pixel / 8;
+	}
+
 	size = fix.line_length * var.yres;
 
 	if (mapped) {
