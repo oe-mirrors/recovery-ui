@@ -205,9 +205,10 @@ static int timer_add(unsigned int ms)
 
 static void __epoll_ctl(int epollfd, int op, int fd, void *ptr)
 {
-	struct epoll_event ev;
+	struct epoll_event ev = {
+		.events = EPOLLIN,
+	};
 
-	ev.events = EPOLLIN;
 	if (ptr == NULL)
 		ev.data.fd = fd;
 	else
