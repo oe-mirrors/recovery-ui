@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Dream Property GmbH, Germany
+ * Copyright (C) 2020 Dream Property GmbH, Germany
  *                    https://dreambox.de/
  */
 
@@ -555,10 +555,14 @@ static struct lcd *stb_lcd_open(const char *device)
 static struct lcd *lcd_open(void)
 {
 	const char oleddev[] = "/dev/dbox/oled0";
+	const char lcddev[] = "/dev/dbox/lcd0";
 	const char fbdev[] = "/dev/fb3";
 
 	if (access(oleddev, W_OK) == 0)
 		return stb_lcd_open(oleddev);
+
+	if (access(lcddev, W_OK) == 0)
+		return stb_lcd_open(lcddev);
 
 	if (access(fbdev, W_OK) == 0)
 		return fbdev_open(fbdev, LCD_INV_AXIS | LCD_REVERSE_Y, false);
