@@ -537,14 +537,14 @@ static struct lcd *stb_lcd_open(const char *device)
 
 	fmt = string_from_file("/proc/stb/lcd/colorformat");
 	if (fmt != NULL) {
-		if (!strcmp(fmt, "RGB_565_BE")) {
+		if (!strncmp(fmt, "RGB_565_", 8)) {
 			lcd->red.offset = 0;
 			lcd->red.size = 5;
 			lcd->green.offset = lcd->red.size;
 			lcd->green.size = 6;
 			lcd->blue.offset = lcd->red.size + lcd->green.size;
 			lcd->blue.size = 5;
-			lcd->byteswap = true;
+			lcd->byteswap = fmt[8] == 'B';
 		}
 		free(fmt);
 	}
