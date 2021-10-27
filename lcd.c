@@ -565,7 +565,7 @@ static struct lcd *lcd_open(void)
 		return stb_lcd_open(lcddev);
 
 	if (access(fbdev, W_OK) == 0)
-		return fbdev_open(fbdev, LCD_INV_AXIS | LCD_REVERSE_Y, false);
+		return fbdev_open(fbdev, 0, false);
 
 	return NULL;
 }
